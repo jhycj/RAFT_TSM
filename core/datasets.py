@@ -3,233 +3,331 @@
 import numpy as np
 import torch
 import torch.utils.data as data
-import torch.nn.functional as F
+#import torch.nn.functional as F
+import torchvision 
 
 import os
-import math
-import random
+#import math
+#import random
 from glob import glob
 import os.path as osp
 
-from utils import frame_utils
-from utils.augmentor import FlowAugmentor, SparseFlowAugmentor
+#from utils import frame_utils
+#from utils.augmentor import FlowAugmentor, SparseFlowAugmentor
+import dataset_config 
+from transforms import *
 
 
-class FlowDataset(data.Dataset):
-    def __init__(self, aug_params=None, sparse=False):
-        self.augmentor = None
-        self.sparse = sparse
-        if aug_params is not None:
-            if sparse:
-                self.augmentor = SparseFlowAugmentor(**aug_params)
+class VideoRecord(object):
+    def __init__(self, row):
+        self._data = row
+
+    @property
+    def path(self):
+        return self._data[0]
+
+    @property
+    def num_frames(self):
+        return int(self._data[1])
+
+    @property
+    def label(self):
+        
+        return int(self._data[2])
+
+class TSNDataSet(data.Dataset):
+    def __init__(self, root_path, list_file,
+                 num_segments=3, new_length=1, modality='RGB',
+                 image_tmpl='img_{:05d}.jpg', transform=None,
+                 random_shift=True, test_mode=False,
+                 remove_missing=False, dense_sample=False, twice_sample=False):
+
+        self.root_path = root_path
+        self.list_file = list_file
+     
+        self.num_segments = num_segments
+        self.new_length = new_length
+        self.modality = modality
+        self.image_tmpl = image_tmpl
+        self.transform = transform
+        self.random_shift = random_shift
+        self.test_mode = test_mode
+        self.remove_missing = remove_missing
+        self.dense_sample = dense_sample  # using dense sample as I3D
+        self.twice_sample = twice_sample  # twice sample for more validation
+        if self.dense_sample:
+            print('=> Using dense sample for the dataset...')
+        if self.twice_sample:
+            print('=> Using twice sample for the dataset...')
+
+        if self.modality == 'RGBDiff':
+            self.new_length += 1  # Diff needs one more image to calculate diff
+
+        self._parse_list()
+
+    def _load_image(self, directory, idx):
+        if self.modality == 'RGB' or self.modality == 'RGBDiff':
+            try:
+                if self.test_mode:             
+                    return [Image.open(os.path.join(self.root_path, directory, self.image_tmpl.format(idx))).convert('RGB')]
+                else: 
+                    return [Image.open(os.path.join(self.root_path, directory, self.image_tmpl.format(idx))).convert('RGB')]
+
+            except Exception:
+                print('error loading image:', os.path.join(self.root_path, directory, self.image_tmpl.format(idx)))
+                return [Image.open(os.path.join(self.root_path, directory, self.image_tmpl.format(1))).convert('RGB')]
+        
+        elif self.modality == 'Flow':
+            if self.image_tmpl == 'flow_{}_{:05d}.jpg':  # ucf
+                x_img = Image.open(os.path.join(self.root_path, directory, self.image_tmpl.format('x', idx))).convert(
+                    'L')
+                y_img = Image.open(os.path.join(self.root_path, directory, self.image_tmpl.format('y', idx))).convert(
+                    'L')
+            elif self.image_tmpl == '{:06d}-{}_{:05d}.jpg':  # something v1 flow
+                x_img = Image.open(os.path.join(self.root_path, '{:06d}'.format(int(directory)), self.image_tmpl.
+                                                format(int(directory), 'x', idx))).convert('L')
+                y_img = Image.open(os.path.join(self.root_path, '{:06d}'.format(int(directory)), self.image_tmpl.
+                                                format(int(directory), 'y', idx))).convert('L')
             else:
-                self.augmentor = FlowAugmentor(**aug_params)
+                try:
+                    # idx_skip = 1 + (idx-1)*5
+                    flow = Image.open(os.path.join(self.root_path, directory, self.image_tmpl.format(idx))).convert(
+                        'RGB')
+                except Exception:
+                    print('error loading flow file:',
+                          os.path.join(self.root_path, directory, self.image_tmpl.format(idx)))
+                    flow = Image.open(os.path.join(self.root_path, directory, self.image_tmpl.format(1))).convert('RGB')
+                # the input flow file is RGB image with (flow_x, flow_y, blank) for each channel
+                flow_x, flow_y, _ = flow.split()
+                x_img = flow_x.convert('L')
+                y_img = flow_y.convert('L')
 
-        self.is_test = False
-        self.init_seed = False
-        self.flow_list = []
-        self.image_list = []
-        self.extra_info = []
+            return [x_img, y_img]
+
+    def _parse_list(self):
+        # check the frame number is large >3:
+        tmp = [x.strip().split(' ') for x in open(self.list_file)]
+        if not self.test_mode or self.remove_missing:
+            tmp = [item for item in tmp if int(item[1]) >= 3]
+        self.video_list = [VideoRecord(item) for item in tmp]
+
+        if self.image_tmpl == '{:06d}-{}_{:05d}.jpg':
+            for v in self.video_list:
+                v._data[1] = int(v._data[1]) / 2
+        print('video number:%d' % (len(self.video_list)))
+
+    def _sample_indices(self, record):
+        """
+
+        :param record: VideoRecord
+        :return: list
+        """
+        if self.dense_sample:  # i3d dense sample
+            sample_pos = max(1, 1 + record.num_frames - 64)
+            t_stride = 64 // self.num_segments
+            start_idx = 0 if sample_pos == 1 else np.random.randint(0, sample_pos - 1)
+            offsets = [(idx * t_stride + start_idx) % record.num_frames for idx in range(self.num_segments)]
+            return np.array(offsets) + 1
+        else:  # normal sample
+            average_duration = (record.num_frames - self.new_length + 1) // self.num_segments
+            if average_duration > 0:
+                offsets = np.multiply(list(range(self.num_segments)), average_duration) + randint(average_duration,
+                                                                                                  size=self.num_segments)
+            elif record.num_frames > self.num_segments:
+                offsets = np.sort(randint(record.num_frames - self.new_length + 1, size=self.num_segments))
+            else:
+                offsets = np.zeros((self.num_segments,))
+            return offsets + 1
+
+    def _get_val_indices(self, record):
+        if self.dense_sample:  # i3d dense sample
+            sample_pos = max(1, 1 + record.num_frames - 64)
+            t_stride = 64 // self.num_segments
+            start_idx = 0 if sample_pos == 1 else np.random.randint(0, sample_pos - 1)
+            offsets = [(idx * t_stride + start_idx) % record.num_frames for idx in range(self.num_segments)]
+            return np.array(offsets) + 1
+        else:
+            if record.num_frames > self.num_segments + self.new_length - 1:
+                tick = (record.num_frames - self.new_length + 1) / float(self.num_segments)
+                offsets = np.array([int(tick / 2.0 + tick * x) for x in range(self.num_segments)])
+            else:
+                offsets = np.zeros((self.num_segments,))
+            return offsets + 1
+
+    def _get_test_indices(self, record):
+        if self.dense_sample:
+            sample_pos = max(1, 1 + record.num_frames - 64)
+            t_stride = 64 // self.num_segments
+            start_list = np.linspace(0, sample_pos - 1, num=10, dtype=int)
+            offsets = []
+            for start_idx in start_list.tolist():
+                offsets += [(idx * t_stride + start_idx) % record.num_frames for idx in range(self.num_segments)]
+            return np.array(offsets) + 1
+        elif self.twice_sample:
+            tick = (record.num_frames - self.new_length + 1) / float(self.num_segments)
+
+            offsets = np.array([int(tick / 2.0 + tick * x) for x in range(self.num_segments)] +
+                               [int(tick * x) for x in range(self.num_segments)])
+
+            return offsets + 1
+        else:
+            tick = (record.num_frames - self.new_length + 1) / float(self.num_segments)
+            offsets = np.array([int(tick / 2.0 + tick * x) for x in range(self.num_segments)])
+            return offsets + 1
 
     def __getitem__(self, index):
+        record = self.video_list[index]
+        # check this is a legit video folder
+        self.root_path = self.root_path 
 
-        if self.is_test:
-            img1 = frame_utils.read_gen(self.image_list[index][0])
-            img2 = frame_utils.read_gen(self.image_list[index][1])
-            img1 = np.array(img1).astype(np.uint8)[..., :3]
-            img2 = np.array(img2).astype(np.uint8)[..., :3]
-            img1 = torch.from_numpy(img1).permute(2, 0, 1).float()
-            img2 = torch.from_numpy(img2).permute(2, 0, 1).float()
-            return img1, img2, self.extra_info[index]
-
-        if not self.init_seed:
-            worker_info = torch.utils.data.get_worker_info()
-            if worker_info is not None:
-                torch.manual_seed(worker_info.id)
-                np.random.seed(worker_info.id)
-                random.seed(worker_info.id)
-                self.init_seed = True
-
-        index = index % len(self.image_list)
-        valid = None
-        if self.sparse:
-            flow, valid = frame_utils.readFlowKITTI(self.flow_list[index])
+        if self.image_tmpl == 'flow_{}_{:05d}.jpg':
+            file_name = self.image_tmpl.format('x', 1)
+            full_path = os.path.join(self.root_path, record.path, file_name)
+        elif self.image_tmpl == '{:06d}-{}_{:05d}.jpg':
+            file_name = self.image_tmpl.format(int(record.path), 'x', 1)
+            full_path = os.path.join(self.root_path, '{:06d}'.format(int(record.path)), file_name)
         else:
-            flow = frame_utils.read_gen(self.flow_list[index])
-
-        img1 = frame_utils.read_gen(self.image_list[index][0])
-        img2 = frame_utils.read_gen(self.image_list[index][1])
-
-        flow = np.array(flow).astype(np.float32)
-        img1 = np.array(img1).astype(np.uint8)
-        img2 = np.array(img2).astype(np.uint8)
-
-        # grayscale images
-        if len(img1.shape) == 2:
-            img1 = np.tile(img1[...,None], (1, 1, 3))
-            img2 = np.tile(img2[...,None], (1, 1, 3))
-        else:
-            img1 = img1[..., :3]
-            img2 = img2[..., :3]
-
-        if self.augmentor is not None:
-            if self.sparse:
-                img1, img2, flow, valid = self.augmentor(img1, img2, flow, valid)
+            file_name = self.image_tmpl.format(1)
+            
+            if self.test_mode :
+                full_path = os.path.join(self.root_path,record.path, file_name)
+            else: 
+                full_path = os.path.join(self.root_path, record.path, file_name)
+                
+                  
+        while not os.path.exists(full_path):
+            print('################## Not Found:', os.path.join(self.root_path, record.path, file_name))
+            index = np.random.randint(len(self.video_list))
+            record = self.video_list[index]
+            if self.image_tmpl == 'flow_{}_{:05d}.jpg':
+                file_name = self.image_tmpl.format('x', 1)
+                full_path = os.path.join(self.root_path,record.path, file_name)
+            elif self.image_tmpl == '{:06d}-{}_{:05d}.jpg':
+                file_name = self.image_tmpl.format(int(record.path), 'x', 1)
+                full_path = os.path.join(self.root_path, '{:06d}'.format(int(record.path)), file_name)
             else:
-                img1, img2, flow = self.augmentor(img1, img2, flow)
+                file_name = self.image_tmpl.format(1)
+                full_path = os.path.join(self.root_path, record.path, file_name)
+        
+        if not self.test_mode:
+            segment_indices = self._sample_indices(record) if self.random_shift else self._get_val_indices(record)
 
-        img1 = torch.from_numpy(img1).permute(2, 0, 1).float()
-        img2 = torch.from_numpy(img2).permute(2, 0, 1).float()
-        flow = torch.from_numpy(flow).permute(2, 0, 1).float()
-
-        if valid is not None:
-            valid = torch.from_numpy(valid)
         else:
-            valid = (flow[0].abs() < 1000) & (flow[1].abs() < 1000)
 
-        return img1, img2, flow, valid.float()
+            segment_indices = self._get_test_indices(record)
+         
+        return self.get(record, segment_indices)
 
+    def get(self, record, indices):
 
-    def __rmul__(self, v):
-        self.flow_list = v * self.flow_list
-        self.image_list = v * self.image_list
-        return self
+        images = list()
+        for seg_ind in indices:
+            p = int(seg_ind)
+            for i in range(self.new_length):
+                seg_imgs = self._load_image(record.path, p)
+                images.extend(seg_imgs)
+                if p < record.num_frames:
+                    p += 1
+   
+        import numpy as np 
+        x = np.asarray(images[0])  
+        process_data = self.transform(images)
         
+        # Only for Tiny imiGUE
+        if 'imiGUE' in self.root_path :   
+            TINYIMIGUE_MAP = {'4': 0, '8': 1, '11':2, '12': 3, '13': 4, '17': 5, 
+                              '20': 6, '21': 7, '22': 8, '23': 9, '24': 10, '26': 11, '29': 12}
+            
+            record.label = str(TINYIMIGUE_MAP[record.label]) 
+
+        return process_data, record.label
+
     def __len__(self):
-        return len(self.image_list)
-        
-
-class MpiSintel(FlowDataset):
-    def __init__(self, aug_params=None, split='training', root='datasets/Sintel', dstype='clean'):
-        super(MpiSintel, self).__init__(aug_params)
-        flow_root = osp.join(root, split, 'flow')
-        image_root = osp.join(root, split, dstype)
-
-        if split == 'test':
-            self.is_test = True
-
-        for scene in os.listdir(image_root):
-            image_list = sorted(glob(osp.join(image_root, scene, '*.png')))
-            for i in range(len(image_list)-1):
-                self.image_list += [ [image_list[i], image_list[i+1]] ]
-                self.extra_info += [ (scene, i) ] # scene and frame_id
-
-            if split != 'test':
-                self.flow_list += sorted(glob(osp.join(flow_root, scene, '*.flo')))
+        return len(self.video_list)
 
 
-class FlyingChairs(FlowDataset):
-    def __init__(self, aug_params=None, split='train', root='datasets/FlyingChairs_release/data'):
-        super(FlyingChairs, self).__init__(aug_params)
-
-        images = sorted(glob(osp.join(root, '*.ppm')))
-        flows = sorted(glob(osp.join(root, '*.flo')))
-        assert (len(images)//2 == len(flows))
-
-        split_list = np.loadtxt('chairs_split.txt', dtype=np.int32)
-        for i in range(len(flows)):
-            xid = split_list[i]
-            if (split=='training' and xid==1) or (split=='validation' and xid==2):
-                self.flow_list += [ flows[i] ]
-                self.image_list += [ [images[2*i], images[2*i+1]] ]
-
-
-class FlyingThings3D(FlowDataset):
-    def __init__(self, aug_params=None, root='datasets/FlyingThings3D', dstype='frames_cleanpass'):
-        super(FlyingThings3D, self).__init__(aug_params)
-
-        for cam in ['left']:
-            for direction in ['into_future', 'into_past']:
-                image_dirs = sorted(glob(osp.join(root, dstype, 'TRAIN/*/*')))
-                image_dirs = sorted([osp.join(f, cam) for f in image_dirs])
-
-                flow_dirs = sorted(glob(osp.join(root, 'optical_flow/TRAIN/*/*')))
-                flow_dirs = sorted([osp.join(f, direction, cam) for f in flow_dirs])
-
-                for idir, fdir in zip(image_dirs, flow_dirs):
-                    images = sorted(glob(osp.join(idir, '*.png')) )
-                    flows = sorted(glob(osp.join(fdir, '*.pfm')) )
-                    for i in range(len(flows)-1):
-                        if direction == 'into_future':
-                            self.image_list += [ [images[i], images[i+1]] ]
-                            self.flow_list += [ flows[i] ]
-                        elif direction == 'into_past':
-                            self.image_list += [ [images[i+1], images[i]] ]
-                            self.flow_list += [ flows[i+1] ]
-      
-
-class KITTI(FlowDataset):
-    def __init__(self, aug_params=None, split='training', root='datasets/KITTI'):
-        super(KITTI, self).__init__(aug_params, sparse=True)
-        if split == 'testing':
-            self.is_test = True
-
-        root = osp.join(root, split)
-        images1 = sorted(glob(osp.join(root, 'image_2/*_10.png')))
-        images2 = sorted(glob(osp.join(root, 'image_2/*_11.png')))
-
-        for img1, img2 in zip(images1, images2):
-            frame_id = img1.split('/')[-1]
-            self.extra_info += [ [frame_id] ]
-            self.image_list += [ [img1, img2] ]
-
-        if split == 'training':
-            self.flow_list = sorted(glob(osp.join(root, 'flow_occ/*_10.png')))
+def get_augmentation(self, flip=True):
+        if self.modality == 'RGB':
+            if flip:
+                return torchvision.transforms.Compose([GroupMultiScaleCrop(self.input_size, [1, .875, .75, .66]),
+                                                       GroupRandomHorizontalFlip(is_flow=False)])
+            else:
+                print('#' * 20, 'NO FLIP!!!')
+                return torchvision.transforms.Compose([GroupMultiScaleCrop(self.input_size, [1, .875, .75, .66])])
+        elif self.modality == 'Flow':
+            return torchvision.transforms.Compose([GroupMultiScaleCrop(self.input_size, [1, .875, .75]),
+                                                   GroupRandomHorizontalFlip(is_flow=True)])
+        elif self.modality == 'RGBDiff':
+            return torchvision.transforms.Compose([GroupMultiScaleCrop(self.input_size, [1, .875, .75]),
+                                                   GroupRandomHorizontalFlip(is_flow=False)])
 
 
-class HD1K(FlowDataset):
-    def __init__(self, aug_params=None, root='datasets/HD1k'):
-        super(HD1K, self).__init__(aug_params, sparse=True)
 
-        seq_ix = 0
-        while 1:
-            flows = sorted(glob(os.path.join(root, 'hd1k_flow_gt', 'flow_occ/%06d_*.png' % seq_ix)))
-            images = sorted(glob(os.path.join(root, 'hd1k_input', 'image_2/%06d_*.png' % seq_ix)))
+def fetch_dataloader(args):
+    """ Create the data loader for the corresponding training set """
 
-            if len(flows) == 0:
-                break
-
-            for i in range(len(flows)-1):
-                self.flow_list += [flows[i]]
-                self.image_list += [ [images[i], images[i+1]] ]
-
-            seq_ix += 1
-
-
-def fetch_dataloader(args, TRAIN_DS='C+T+K+S+H'):
-    """ Create the data loader for the corresponding trainign set """
-
-    if args.stage == 'chairs':
-        aug_params = {'crop_size': args.image_size, 'min_scale': -0.1, 'max_scale': 1.0, 'do_flip': True}
-        train_dataset = FlyingChairs(aug_params, split='training')
+    num_class, args.train_list, args.val_list, args.root_path, prefix = dataset_config.return_dataset(args.dataset, args.modality)
     
-    elif args.stage == 'things':
-        aug_params = {'crop_size': args.image_size, 'min_scale': -0.4, 'max_scale': 0.8, 'do_flip': True}
-        clean_dataset = FlyingThings3D(aug_params, dstype='frames_cleanpass')
-        final_dataset = FlyingThings3D(aug_params, dstype='frames_finalpass')
-        train_dataset = clean_dataset + final_dataset
+    if args.dataset == 'sthsthv2': 
 
-    elif args.stage == 'sintel':
-        aug_params = {'crop_size': args.image_size, 'min_scale': -0.2, 'max_scale': 0.6, 'do_flip': True}
-        things = FlyingThings3D(aug_params, dstype='frames_cleanpass')
-        sintel_clean = MpiSintel(aug_params, split='training', dstype='clean')
-        sintel_final = MpiSintel(aug_params, split='training', dstype='final')        
+        train_augmentation = get_augmentation(flip=False if 'something' in args.dataset or 'jester' in args.dataset else True)
+        input_mean = [0.485, 0.456, 0.406]
+        input_std = [0.229, 0.224, 0.225]
+    
+        train_dataset = TSNDataSet(
+            args.root_path, 
+            args.train_list,
+            args.num_segments, 
+            new_length=1, 
+            modality='RGB',
+            image_tmpl='img_{:05d}.jpg', 
+            transform= torchvision.transforms.Compose([
+                train_augmentation,
+                Stack(roll=(args.arch in ['BNInception', 'InceptionV3'])),
+                ToTorchFormatTensor(div=(args.arch not in ['BNInception', 'InceptionV3'])),
+                GroupNormalize(input_mean, input_std)]),
+            dense_sample = args.dense_sample)
+        
+        scale_size = 224 * 256 // 224
+        crop_size = 224
 
-        if TRAIN_DS == 'C+T+K+S+H':
-            kitti = KITTI({'crop_size': args.image_size, 'min_scale': -0.3, 'max_scale': 0.5, 'do_flip': True})
-            hd1k = HD1K({'crop_size': args.image_size, 'min_scale': -0.5, 'max_scale': 0.2, 'do_flip': True})
-            train_dataset = 100*sintel_clean + 100*sintel_final + 200*kitti + 5*hd1k + things
+        valid_dataset = TSNDataSet(
+            args.root_path, 
+            args.val_list, 
+            args.num_segments,
+            new_length=1,
+            modality=args.modality,
+            image_tmpl=prefix,
+            random_shift=False,
+            transform=torchvision.transforms.Compose([
+                GroupScale(int(scale_size)),
+                GroupCenterCrop(crop_size),
+                Stack(roll=(args.arch in ['BNInception', 'InceptionV3'])),
+                ToTorchFormatTensor(div=(args.arch not in ['BNInception', 'InceptionV3'])),
+                GroupNormalize(input_mean, input_std)]), 
+            dense_sample=args.dense_sample, 
+            test_mode= True)
+    
+    
+        train_loader = data.DataLoader(
+            train_dataset, 
+            batch_size=args.batch_size, 
+            shuffle=False, 
+            num_workers=args.num_workers, 
+            pin_memory= True,
+            shuffle=True, 
+            drop_last= True  
+        )
 
-        elif TRAIN_DS == 'C+T+K/S':
-            train_dataset = 100*sintel_clean + 100*sintel_final + things
+        val_loader = data.DataLoader(
+            valid_dataset, 
+            batch_size=args.batch_size, 
+            shuffle=False, 
+            num_workers=args.num_workers, 
+            pin_memory= True 
 
-    elif args.stage == 'kitti':
-        aug_params = {'crop_size': args.image_size, 'min_scale': -0.2, 'max_scale': 0.4, 'do_flip': False}
-        train_dataset = KITTI(aug_params, split='training')
-
-    train_loader = data.DataLoader(train_dataset, batch_size=args.batch_size, 
-        pin_memory=False, shuffle=True, num_workers=4, drop_last=True)
+        )
 
     print('Training with %d image pairs' % len(train_dataset))
-    return train_loader
-
+    
+    return train_loader, val_loader
