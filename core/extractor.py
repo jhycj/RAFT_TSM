@@ -167,27 +167,33 @@ class BasicEncoder(nn.Module):
 
     def forward(self, x):
 
+        # Multiple Frame Version 
+
         # if input is list, combine batch dimension
         is_list = isinstance(x, tuple) or isinstance(x, list)
         if is_list:
             batch_dim = x[0].shape[0]
             x = torch.cat(x, dim=0)
 
+        print(f'f net before shape:{x.shape}') # ([16, 3, 224, 224])
+
         x = self.conv1(x)
         x = self.norm1(x)
         x = self.relu1(x)
-
+        
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
 
         x = self.conv2(x)
-
+    
         if self.training and self.dropout is not None:
             x = self.dropout(x)
 
         if is_list:
             x = torch.split(x, [batch_dim, batch_dim], dim=0)
+    
+        print(f'output shape: {x.shape}') # ([16, 256, 28, 28]) 
 
         return x
 

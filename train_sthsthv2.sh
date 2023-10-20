@@ -1,0 +1,1 @@
+python -u train.py --name raft-tsm --stage sthsthv2 --validation sthshtv2 --gpus 0 --num_steps 120000 --batch_size 8 --lr 0.00025 --image_size 224 224 --wdecay 0.0001 --mixed_precision --no_partialbn

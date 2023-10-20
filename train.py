@@ -19,6 +19,8 @@ from raft import RAFT
 import evaluate
 import datasets
 
+from models import TSN
+
 from torch.utils.tensorboard import SummaryWriter
 
 try:
@@ -134,10 +136,26 @@ class Logger:
 
 
 def train(args):
+   
 
-    model = nn.DataParallel(RAFT(args), device_ids=args.gpus)
+    model = TSN(
+        args.num_class,
+        args.num_segments, 
+        args.pretrained_parts, 
+        args.modality,
+        base_model = args.arch, 
+        consensus_type=args.consensus_type, 
+        dropout=args.dropout, 
+        partial_bn=not args.no_partialbn, 
+        args= args
+        ) 
+    
+    model = nn.DataParallel(model, device_ids=args.gpus) 
+    tmp_input = torch.randn([2, 24, 224, 224]) 
+    output = model(tmp_input, 100)
+
     print("Parameter Count: %d" % count_parameters(model))
-
+    '''
     if args.restore_ckpt is not None:
         model.load_state_dict(torch.load(args.restore_ckpt), strict=False)
 
@@ -147,7 +165,7 @@ def train(args):
     if args.stage != 'chairs':
         model.module.freeze_bn()
 
-    train_loader = datasets.fetch_dataloader(args)
+    train_loader, validation_loader = datasets.fetch_dataloader(args)
     optimizer, scheduler = fetch_optimizer(args, model)
 
     total_steps = 0
@@ -162,13 +180,11 @@ def train(args):
 
         for i_batch, data_blob in enumerate(train_loader):
             optimizer.zero_grad()
-            image1, image2, flow, valid = [x.cuda() for x in data_blob]
+            #image1, image2, flow, valid = [x.cuda() for x in data_blob]
+            image1, label = [x.cuda() for x in data_blob]
 
-            if args.add_noise:
-                stdv = np.random.uniform(0.0, 5.0)
-                image1 = (image1 + stdv * torch.randn(*image1.shape).cuda()).clamp(0.0, 255.0)
-                image2 = (image2 + stdv * torch.randn(*image2.shape).cuda()).clamp(0.0, 255.0)
-
+            image2 = torch.random()
+          
             flow_predictions = model(image1, image2, iters=args.iters)            
 
             loss, metrics = sequence_loss(flow_predictions, flow, valid, args.gamma)
@@ -212,7 +228,7 @@ def train(args):
     torch.save(model.state_dict(), PATH)
 
     return PATH
-
+    '''
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -224,18 +240,36 @@ if __name__ == '__main__':
 
     parser.add_argument('--lr', type=float, default=0.00002)
     parser.add_argument('--num_steps', type=int, default=100000)
-    parser.add_argument('--batch_size', type=int, default=6)
-    parser.add_argument('--image_size', type=int, nargs='+', default=[384, 512])
-    parser.add_argument('--gpus', type=int, nargs='+', default=[0,1])
+    parser.add_argument('--batch_size', type=int, default=1)
+    parser.add_argument('--image_size', type=int, nargs='+', default=[224, 224])
+    parser.add_argument('--gpus', type=int, nargs='+', default=[0])
     parser.add_argument('--mixed_precision', action='store_true', help='use mixed precision')
 
     parser.add_argument('--iters', type=int, default=12)
     parser.add_argument('--wdecay', type=float, default=.00005)
     parser.add_argument('--epsilon', type=float, default=1e-8)
     parser.add_argument('--clip', type=float, default=1.0)
-    parser.add_argument('--dropout', type=float, default=0.0)
+   
     parser.add_argument('--gamma', type=float, default=0.8, help='exponential weighting')
     parser.add_argument('--add_noise', action='store_true')
+
+    parser.add_argument('--dataset', type=str, default='somethingv2')
+    parser.add_argument('--modality', type=str, default='RGB')
+    parser.add_argument('--num_segments', type=int, default=8)
+
+    parser.add_argument('--dense_sample', default=False, action="store_true", help='use dense sample for video dataset')
+    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--num_class', type=int, default=174)
+    
+    parser.add_argument('--arch', type=str, default='RAFT')
+    parser.add_argument('--consensus_type', type=str, default='avg') 
+
+    parser.add_argument('--dropout', '--do', default=0.5, type=float, metavar='DO', help='dropout ratio (default: 0.5)')
+        
+    parser.add_argument('--no_partialbn', '--npb', default=True , action="store_true") 
+
+    parser.add_argument('--pretrained_parts', type=str, default='finetune', choices=['scratch', '2D', '3D', 'both','finetune'])
+
     args = parser.parse_args()
 
     torch.manual_seed(1234)
@@ -245,3 +279,4 @@ if __name__ == '__main__':
         os.mkdir('checkpoints')
 
     train(args)
+ 

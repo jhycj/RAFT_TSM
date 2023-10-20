@@ -5,7 +5,7 @@
 
 import os
 
-ROOT_DATASET = '/home/heeyoung/repos/tsm_advanced/data/'
+ROOT_DATASET = '/home/heeyoung/repos/RAFT_TSM/data/TSM_sthsthv2_dataset'
 
 def return_somethingv2(modality):
     

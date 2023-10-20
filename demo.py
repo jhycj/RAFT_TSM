@@ -35,8 +35,9 @@ def viz(img, flo):
     # plt.imshow(img_flo / 255.0)
     # plt.show()
 
-    cv2.imshow('image', img_flo[:, :, [2,1,0]]/255.0)
-    cv2.waitKey()
+    
+    #cv2.imshow('image', img_flo[:, :, [2,1,0]]/255.0)
+    #cv2.waitKey()
 
 
 def demo(args):
@@ -56,8 +57,12 @@ def demo(args):
             image1 = load_image(imfile1)
             image2 = load_image(imfile2)
 
+            print(f'image1.shape: {image1.shape}')
+
             padder = InputPadder(image1.shape)
             image1, image2 = padder.pad(image1, image2)
+
+            print(f'padded image1: {image1.shape}')
 
             flow_low, flow_up = model(image1, image2, iters=20, test_mode=True)
             viz(image1, flow_up)

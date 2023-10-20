@@ -85,10 +85,11 @@ class RAFT(nn.Module):
 
     def forward(self, image1, image2, iters=12, flow_init=None, upsample=True, test_mode=False):
         """ Estimate optical flow between pair of frames """
-
+        
+        # get 2 input images 
         image1 = 2 * (image1 / 255.0) - 1.0
         image2 = 2 * (image2 / 255.0) - 1.0
-
+     
         image1 = image1.contiguous()
         image2 = image2.contiguous()
 
@@ -97,7 +98,12 @@ class RAFT(nn.Module):
 
         # run the feature network
         with autocast(enabled=self.args.mixed_precision):
-            fmap1, fmap2 = self.fnet([image1, image2])        
+            fmap1, fmap2 = self.fnet([image1, image2])      
+
+
+        print(f'feature map1 shape: {fmap1.shape}') #[1, 256, 55, 128]
+        print(f'feature map2 shape: {fmap2.shape}') #[1, 256, 55, 128]
+
         
         fmap1 = fmap1.float()
         fmap2 = fmap2.float()

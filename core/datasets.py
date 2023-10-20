@@ -37,8 +37,8 @@ class VideoRecord(object):
 
 class TSNDataSet(data.Dataset):
     def __init__(self, root_path, list_file,
-                 num_segments=3, new_length=1, modality='RGB',
-                 image_tmpl='img_{:05d}.jpg', transform=None,
+                 num_segments=2, new_length=1, modality='RGB',
+                 image_tmpl='{:06d}.jpg', transform=None,
                  random_shift=True, test_mode=False,
                  remove_missing=False, dense_sample=False, twice_sample=False):
 
@@ -69,9 +69,9 @@ class TSNDataSet(data.Dataset):
         if self.modality == 'RGB' or self.modality == 'RGBDiff':
             try:
                 if self.test_mode:             
-                    return [Image.open(os.path.join(self.root_path, directory, self.image_tmpl.format(idx))).convert('RGB')]
+                    return [Image.open(os.path.join(self.root_path+'/TSM_sthsthv2_imgs/valid', directory, self.image_tmpl.format(idx))).convert('RGB')]
                 else: 
-                    return [Image.open(os.path.join(self.root_path, directory, self.image_tmpl.format(idx))).convert('RGB')]
+                    return [Image.open(os.path.join(self.root_path+'/TSM_sthsthv2_imgs/train', directory, self.image_tmpl.format(idx))).convert('RGB')]
 
             except Exception:
                 print('error loading image:', os.path.join(self.root_path, directory, self.image_tmpl.format(idx)))
@@ -131,10 +131,10 @@ class TSNDataSet(data.Dataset):
         else:  # normal sample
             average_duration = (record.num_frames - self.new_length + 1) // self.num_segments
             if average_duration > 0:
-                offsets = np.multiply(list(range(self.num_segments)), average_duration) + randint(average_duration,
+                offsets = np.multiply(list(range(self.num_segments)), average_duration) + np.random.randint(average_duration,
                                                                                                   size=self.num_segments)
             elif record.num_frames > self.num_segments:
-                offsets = np.sort(randint(record.num_frames - self.new_length + 1, size=self.num_segments))
+                offsets = np.sort(np.random.randint(record.num_frames - self.new_length + 1, size=self.num_segments))
             else:
                 offsets = np.zeros((self.num_segments,))
             return offsets + 1
@@ -178,25 +178,20 @@ class TSNDataSet(data.Dataset):
     def __getitem__(self, index):
         record = self.video_list[index]
         # check this is a legit video folder
-        self.root_path = self.root_path 
 
-        if self.image_tmpl == 'flow_{}_{:05d}.jpg':
-            file_name = self.image_tmpl.format('x', 1)
-            full_path = os.path.join(self.root_path, record.path, file_name)
-        elif self.image_tmpl == '{:06d}-{}_{:05d}.jpg':
-            file_name = self.image_tmpl.format(int(record.path), 'x', 1)
-            full_path = os.path.join(self.root_path, '{:06d}'.format(int(record.path)), file_name)
-        else:
-            file_name = self.image_tmpl.format(1)
-            
-            if self.test_mode :
-                full_path = os.path.join(self.root_path,record.path, file_name)
-            else: 
-                full_path = os.path.join(self.root_path, record.path, file_name)
-                
-                  
+        
+        file_name = self.image_tmpl.format(1)
+        
+        if self.test_mode :
+            #self.root_path = self.root_path 
+            full_path = os.path.join(self.root_path + '/TSM_sthsthv2_imgs/valid' ,record.path, file_name)
+        else: 
+            #self.root_path = self.root_path 
+            full_path = os.path.join(self.root_path+ '/TSM_sthsthv2_imgs/train', record.path, file_name)
+        
+        
         while not os.path.exists(full_path):
-            print('################## Not Found:', os.path.join(self.root_path, record.path, file_name))
+            print('################## Not Found:', full_path)
             index = np.random.randint(len(self.video_list))
             record = self.video_list[index]
             if self.image_tmpl == 'flow_{}_{:05d}.jpg':
@@ -215,7 +210,7 @@ class TSNDataSet(data.Dataset):
         else:
 
             segment_indices = self._get_test_indices(record)
-         
+        
         return self.get(record, segment_indices)
 
     def get(self, record, indices):
@@ -246,19 +241,21 @@ class TSNDataSet(data.Dataset):
         return len(self.video_list)
 
 
-def get_augmentation(self, flip=True):
-        if self.modality == 'RGB':
+def get_augmentation(args, flip=True):
+        
+        if args.modality == 'RGB':
             if flip:
-                return torchvision.transforms.Compose([GroupMultiScaleCrop(self.input_size, [1, .875, .75, .66]),
+                
+                return torchvision.transforms.Compose([GroupMultiScaleCrop(args.image_size, [1, .875, .75, .66]),
                                                        GroupRandomHorizontalFlip(is_flow=False)])
             else:
                 print('#' * 20, 'NO FLIP!!!')
-                return torchvision.transforms.Compose([GroupMultiScaleCrop(self.input_size, [1, .875, .75, .66])])
-        elif self.modality == 'Flow':
-            return torchvision.transforms.Compose([GroupMultiScaleCrop(self.input_size, [1, .875, .75]),
+                return torchvision.transforms.Compose([GroupMultiScaleCrop(args.image_size, [1, .875, .75, .66])])
+        elif args.modality == 'Flow':
+            return torchvision.transforms.Compose([GroupMultiScaleCrop(args.image_size, [1, .875, .75]),
                                                    GroupRandomHorizontalFlip(is_flow=True)])
-        elif self.modality == 'RGBDiff':
-            return torchvision.transforms.Compose([GroupMultiScaleCrop(self.input_size, [1, .875, .75]),
+        elif args.modality == 'RGBDiff':
+            return torchvision.transforms.Compose([GroupMultiScaleCrop(args.image_size, [1, .875, .75]),
                                                    GroupRandomHorizontalFlip(is_flow=False)])
 
 
@@ -267,10 +264,12 @@ def fetch_dataloader(args):
     """ Create the data loader for the corresponding training set """
 
     num_class, args.train_list, args.val_list, args.root_path, prefix = dataset_config.return_dataset(args.dataset, args.modality)
+    train_loader = None 
+    val_loader = None 
     
-    if args.dataset == 'sthsthv2': 
+    if args.dataset == 'somethingv2': 
 
-        train_augmentation = get_augmentation(flip=False if 'something' in args.dataset or 'jester' in args.dataset else True)
+        train_augmentation = get_augmentation(args, flip=False if 'something' in args.dataset or 'jester' in args.dataset else True)
         input_mean = [0.485, 0.456, 0.406]
         input_std = [0.229, 0.224, 0.225]
     
@@ -280,7 +279,7 @@ def fetch_dataloader(args):
             args.num_segments, 
             new_length=1, 
             modality='RGB',
-            image_tmpl='img_{:05d}.jpg', 
+            image_tmpl=prefix, 
             transform= torchvision.transforms.Compose([
                 train_augmentation,
                 Stack(roll=(args.arch in ['BNInception', 'InceptionV3'])),
@@ -312,7 +311,6 @@ def fetch_dataloader(args):
         train_loader = data.DataLoader(
             train_dataset, 
             batch_size=args.batch_size, 
-            shuffle=False, 
             num_workers=args.num_workers, 
             pin_memory= True,
             shuffle=True, 
@@ -328,6 +326,6 @@ def fetch_dataloader(args):
 
         )
 
-    print('Training with %d image pairs' % len(train_dataset))
+        print('Training with %d image pairs' % len(train_dataset))
     
     return train_loader, val_loader
