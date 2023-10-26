@@ -61,7 +61,7 @@ def bilinear_sampler(img, coords, mode='bilinear', mask=False):
     xgrid = 2*xgrid/(W-1) - 1
     ygrid = 2*ygrid/(H-1) - 1
 
-    grid = torch.cat([xgrid, ygrid], dim=-1)
+    grid = torch.cat([xgrid, ygrid], dim=-1).cuda()
     img = F.grid_sample(img, grid, align_corners=True)
 
     if mask:
@@ -78,5 +78,6 @@ def coords_grid(batch, ht, wd, device):
 
 
 def upflow8(flow, mode='bilinear'):
+    
     new_size = (8 * flow.shape[2], 8 * flow.shape[3])
     return  8 * F.interpolate(flow, size=new_size, mode=mode, align_corners=True)

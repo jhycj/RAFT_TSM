@@ -272,6 +272,8 @@ def fetch_dataloader(args):
         train_augmentation = get_augmentation(args, flip=False if 'something' in args.dataset or 'jester' in args.dataset else True)
         input_mean = [0.485, 0.456, 0.406]
         input_std = [0.229, 0.224, 0.225]
+        scale_size = 224 * 256 // 224
+        crop_size = 224
     
         train_dataset = TSNDataSet(
             args.root_path, 
@@ -281,14 +283,14 @@ def fetch_dataloader(args):
             modality='RGB',
             image_tmpl=prefix, 
             transform= torchvision.transforms.Compose([
+                GroupScale(int(scale_size)), 
                 train_augmentation,
                 Stack(roll=(args.arch in ['BNInception', 'InceptionV3'])),
                 ToTorchFormatTensor(div=(args.arch not in ['BNInception', 'InceptionV3'])),
                 GroupNormalize(input_mean, input_std)]),
             dense_sample = args.dense_sample)
         
-        scale_size = 224 * 256 // 224
-        crop_size = 224
+       
 
         valid_dataset = TSNDataSet(
             args.root_path, 
@@ -326,6 +328,6 @@ def fetch_dataloader(args):
 
         )
 
-        print('Training with %d image pairs' % len(train_dataset))
+        print('Training with %d videos' % len(train_dataset))
     
     return train_loader, val_loader

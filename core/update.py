@@ -89,6 +89,7 @@ class BasicMotionEncoder(nn.Module):
     def forward(self, flow, corr):
         cor = F.relu(self.convc1(corr))
         cor = F.relu(self.convc2(cor))
+        
         flo = F.relu(self.convf1(flow))
         flo = F.relu(self.convf2(flo))
 
@@ -126,6 +127,7 @@ class BasicUpdateBlock(nn.Module):
 
     def forward(self, net, inp, corr, flow, upsample=True):
         motion_features = self.encoder(flow, corr)
+
         inp = torch.cat([inp, motion_features], dim=1)
 
         net = self.gru(net, inp)

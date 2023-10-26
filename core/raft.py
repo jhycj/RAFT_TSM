@@ -100,13 +100,10 @@ class RAFT(nn.Module):
         with autocast(enabled=self.args.mixed_precision):
             fmap1, fmap2 = self.fnet([image1, image2])      
 
-
-        print(f'feature map1 shape: {fmap1.shape}') #[1, 256, 55, 128]
-        print(f'feature map2 shape: {fmap2.shape}') #[1, 256, 55, 128]
-
-        
         fmap1 = fmap1.float()
         fmap2 = fmap2.float()
+        
+
         if self.args.alternate_corr:
             corr_fn = AlternateCorrBlock(fmap1, fmap2, radius=self.args.corr_radius)
         else:
@@ -127,10 +124,13 @@ class RAFT(nn.Module):
         flow_predictions = []
         for itr in range(iters):
             coords1 = coords1.detach()
+            # print(f'coords1.shape: {coords1.shape}') # coords1.shape: torch.Size([1, 2, 55, 128]) 
+
             corr = corr_fn(coords1) # index correlation volume
 
             flow = coords1 - coords0
             with autocast(enabled=self.args.mixed_precision):
+               
                 net, up_mask, delta_flow = self.update_block(net, inp, corr, flow)
 
             # F(t+1) = F(t) + \Delta(t)

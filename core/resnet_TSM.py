@@ -279,10 +279,15 @@ class Flow_refinement(nn.Module):
 
         self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, x, res, match_v): # x<-flow (u,v), res<-x, match_v : max_value에 해당  
+    def forward(self, x, res, match_v): # x<-flow (u,v), res<-x, match_v : max_value에 해당 -> (B*(T-1), k, H, W), k=1  
         
         if match_v is not None:
-            x = tr.cat([x, match_v], dim=1)
+
+            # x shape: [b*(t-1), 2, h, w]
+            # match_v shape: [b*(t-1), 1, h, w] 
+
+            x = tr.cat([x, match_v], dim=1) 
+
         _, c, h, w = x.size()
         x = x.view(-1,self.num_segments-1,c,h,w)
 
@@ -433,8 +438,8 @@ class ResNet(nn.Module):
         soft_idx_y = idx_y[:,:1]
         displacement = (self.patch-1)/2
         
-        topk_value, topk_idx = tr.topk(match, k, dim=1)    # (B*T-1, k, H*W)
-        topk_value = topk_value.view(-1,k,h,w)
+        topk_value, topk_idx = tr.topk(match, k, dim=1)   
+        topk_value = topk_value.view(-1,k,h,w) # topk_value shape: (B*T-1, k, H*W) 
         
         match = self.apply_gaussian_kernel(match, h, w, self.patch, sigma=5)
         match = match*temperature
@@ -454,7 +459,7 @@ class ResNet(nn.Module):
         flow_x = (flow_x / (self.patch_dilation * displacement))
         flow_y = (flow_y / (self.patch_dilation * displacement))
             
-        return flow_x, flow_y, topk_value          
+        return flow_x, flow_y, topk_value     #topk_value shape: (B*T-1, k, H*W)       
         
     def _make_layer(self, block, planes, blocks, num_segments, stride=1):   
 
@@ -498,7 +503,8 @@ class ResNet(nn.Module):
         #print(f'match_shape')
         #print(match.shape) 
         #print('------')       
-        u, v, confidence = self.match_to_flow_soft(match, k, h, w, temperature)
+        u, v, confidence = self.match_to_flow_soft(match, k, h, w, temperature) # confidence shape:  # (B*T-1, k, H, W), k=1  
+        topk_value = topk_value.view(-1,k,h,w)
         flow = tr.cat([u,v], dim=1).view(-1, 2*k, h, w)  #  (b, 2, h, w)            
         #print(f'flow_shape') 
         #print(flow.shape) 
@@ -522,13 +528,12 @@ class ResNet(nn.Module):
         x = self.layer1(x)                                                 
         x = self.layer2(x)          
         
+        
+
         # MotionSqueeze Estimation 
         if (self.flow_estimation == 1):  
-            flow_1, match_v = self.flow_computation(x, temperature=temperature)
+            flow_1, match_v = self.flow_computation(x, temperature=temperature) # confidence shape:  # (B*T-1, k, H, W)  
             x = self.flow_refinement(flow_1,x, match_v)
-
-      
-
 
         x = self.layer3(x)                                    
         x = self.layer4(x)

@@ -18,41 +18,54 @@ class CorrBlock:
         # all pairs correlation
         corr = CorrBlock.corr(fmap1, fmap2)
 
-        batch, h1, w1, dim, h2, w2 = corr.shape
+        batch, h1, w1, dim, h2, w2 = corr.shape # batch -> b*T 
         corr = corr.reshape(batch*h1*w1, dim, h2, w2)
         
         self.corr_pyramid.append(corr)
-        for i in range(self.num_levels-1):
+
+        for i in range(self.num_levels-1): # Pyramid 
+
             corr = F.avg_pool2d(corr, 2, stride=2)
             self.corr_pyramid.append(corr)
 
     def __call__(self, coords):
+
         r = self.radius
-        coords = coords.permute(0, 2, 3, 1)
-        batch, h1, w1, _ = coords.shape
+        coords = coords.permute(0, 2, 3, 1) 
+        batch, h1, w1, _ = coords.shape  # [1, 5, 128, 2]  
 
         out_pyramid = []
         for i in range(self.num_levels):
             corr = self.corr_pyramid[i]
+            
             dx = torch.linspace(-r, r, 2*r+1, device=coords.device)
             dy = torch.linspace(-r, r, 2*r+1, device=coords.device)
-            delta = torch.stack(torch.meshgrid(dy, dx), axis=-1)
+            delta = torch.stack(torch.meshgrid(dy, dx), axis=-1) 
 
             centroid_lvl = coords.reshape(batch*h1*w1, 1, 1, 2) / 2**i
-            delta_lvl = delta.view(1, 2*r+1, 2*r+1, 2)
+            delta_lvl = delta.view(1, 2*r+1, 2*r+1, 2) 
+            
+            #print(f'delta_lvl: {delta_lvl.shape}') # delta_lvl: torch.Size([1, 9, 9, 2]) 
             coords_lvl = centroid_lvl + delta_lvl
-
+            
+            #print(f'corr: {corr.shape}') # corr: torch.Size([8548, 1, 28, 28]) ->([5488, 1, 14, 14]) -> [5488, 1, 7, 7]) ->([5488, 1, 3, 3]) 
+            #print(f'corrds_lvl: {coords_lvl.shape}') 
+            
             corr = bilinear_sampler(corr, coords_lvl)
             corr = corr.view(batch, h1, w1, -1)
-            out_pyramid.append(corr)
+            #print(f'after corr shape:{corr.shape}') # ([7, 28, 28, 81]) (All level has same corr shape)
 
+            out_pyramid.append(corr)
+ 
         out = torch.cat(out_pyramid, dim=-1)
         return out.permute(0, 3, 1, 2).contiguous().float()
 
     @staticmethod
     def corr(fmap1, fmap2):
-        batch, dim, ht, wd = fmap1.shape
-        fmap1 = fmap1.view(batch, dim, ht*wd)
+        # input : 2 feature  maps  of image1 and image2 
+        batch, dim, ht, wd = fmap1.shape # [b*(t-1), C, H, W] 
+        
+        fmap1 = fmap1.view(batch, dim, ht*wd)   
         fmap2 = fmap2.view(batch, dim, ht*wd) 
         
         corr = torch.matmul(fmap1.transpose(1,2), fmap2)

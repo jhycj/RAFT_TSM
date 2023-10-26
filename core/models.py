@@ -32,8 +32,6 @@ class TSN(nn.Module):
         self.consensus = ConsensusModule(consensus_type)
 
     
-
-    
         if not before_softmax and consensus_type != 'avg':
             raise ValueError("Only avg consensus can be used after Softmax")
 
@@ -46,16 +44,7 @@ class TSN(nn.Module):
                 consensus_module:   {}
                 dropout_ratio:      {}
                     """.format(base_model, self.modality, self.num_segments, self.new_length, consensus_type, self.dropout)))
-        '''
-        if (base_model == 'MS'):
-
-            self.base_model = resnet50(True, shift='TSM', num_segments = num_segments, flow_estimation = 1, patch_size = patch_size)
-            self.base_model.last_layer_name = 'fc1'
-            self.input_size = 224
-            self.input_mean = [0.485, 0.456, 0.406]
-            self.input_std = [0.229, 0.224, 0.225]          
-            feature_dim = self._prepare_tsn(num_class)   
-        '''
+      
         if (base_model == 'RAFT') : 
             
             self.base_model = resnet50(True, shift='TSM', num_segments = num_segments, flow_estimation = 1, args= args)
@@ -280,7 +269,7 @@ class TSN(nn.Module):
         base_out = self.base_model(input_var, temperature) # RAFT version. 
         # zc comments
         if self.dropout > 0:
-            print(self.new_fc) 
+           
             base_out = self.new_fc(base_out)
 
         if not self.before_softmax:
