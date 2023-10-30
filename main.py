@@ -265,6 +265,14 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
+def freeze_network(model):
+    for name, p in model.named_modules():
+        if 'raft_motion_estimator' in name:
+            p.requires_grad = False 
+
+    return model 
+
+
 def main(args):
    
     # Load Model (RAFT_TSM) 
@@ -280,6 +288,9 @@ def main(args):
         partial_bn=not args.no_partialbn, 
         args= args
         ) 
+    
+    model = freeze_network(model) 
+    
     
     # Fetch a optimizer  
     policies = model.get_optim_policies(args.dataset) 
