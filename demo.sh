@@ -1,1 +1,1 @@
-python demo.py --model=models/raft-things.pth --path=demo-frames
+python demo.py --model=models/raft-things.pth --path=MS_super_TSM_dataset/MS_super_TSM_imgs/label_99/233

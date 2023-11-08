@@ -32,29 +32,38 @@ class CorrBlock:
 
         r = self.radius
         coords = coords.permute(0, 2, 3, 1) 
-        batch, h1, w1, _ = coords.shape  # [1, 5, 128, 2]  
-
+        batch, h1, w1, _ = coords.shape  
+    
         out_pyramid = []
+
+
         for i in range(self.num_levels):
             corr = self.corr_pyramid[i]
+            #print(f'{i}th pyramid corr: {corr.shape}') 
+
+            #print(f'corr inspective: {corr[365, 0].shape}')
+            # print(corr[165, 0]) 
             
             dx = torch.linspace(-r, r, 2*r+1, device=coords.device)
             dy = torch.linspace(-r, r, 2*r+1, device=coords.device)
             delta = torch.stack(torch.meshgrid(dy, dx), axis=-1) 
 
-            centroid_lvl = coords.reshape(batch*h1*w1, 1, 1, 2) / 2**i
+            centroid_lvl = coords.reshape(batch*h1*w1, 1, 1, 2) / 2**i 
+            #print(f'centroid_lvl: {centroid_lvl.shape}') # [7*28*28, 1, 1, 2] 
             delta_lvl = delta.view(1, 2*r+1, 2*r+1, 2) 
-            
+            #print(f'delta: {delta_lvl.shape}')             
             #print(f'delta_lvl: {delta_lvl.shape}') # delta_lvl: torch.Size([1, 9, 9, 2]) 
             coords_lvl = centroid_lvl + delta_lvl
-            
+            #print(f'coords_lvl: {coords_lvl.shape}') # [p, 9, 9, 2]
+        
             #print(f'corr: {corr.shape}') # corr: torch.Size([8548, 1, 28, 28]) ->([5488, 1, 14, 14]) -> [5488, 1, 7, 7]) ->([5488, 1, 3, 3]) 
-            #print(f'corrds_lvl: {coords_lvl.shape}') 
             
-            corr = bilinear_sampler(corr, coords_lvl)
+            corr = bilinear_sampler(corr, coords_lvl) # [p, 1, 9, 9]  , [p, 9, 9, 2]
+            #print(f'after bilinear corr shape:{corr.shape}') # ([p, 1, 9, 9]) (All level has same corr shape)
+            
             corr = corr.view(batch, h1, w1, -1)
             #print(f'after corr shape:{corr.shape}') # ([7, 28, 28, 81]) (All level has same corr shape)
-
+            
             out_pyramid.append(corr)
  
         out = torch.cat(out_pyramid, dim=-1)

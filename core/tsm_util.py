@@ -5,7 +5,7 @@ def tsm(tensor, duration, version='circulant'):
     # tensor [N*T, C, H, W]
     size = tensor.size()
     tensor = tensor.view((-1, duration) + size[1:])
-    # tensor [N, T, C, H, W]    
+    # tensor [N, T, C, H, W]  
 
     pre_tensor, post_tensor, peri_tensor = tensor.split([size[1] // 8,
                                                          size[1] // 8,

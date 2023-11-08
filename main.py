@@ -289,7 +289,11 @@ def main(args):
         args= args
         ) 
     
-    model = freeze_network(model) 
+    model = freeze_network(model)
+    model = model.cuda()
+    #tmp_input = 255*torch.rand(8, 3, 224, 224).contiguous().cuda()
+    
+    #output = model(tmp_input, 100) 
     
     
     # Fetch a optimizer  
@@ -326,8 +330,8 @@ def main(args):
   
     '''
     # Do not need with the RAFT_TSM Model
-    if args.stage != 'chairs':
-        model.module.freeze_bn()
+    #if args.stage != 'chairs':
+    #    model.module.freeze_bn()
     '''
 
     # Fetch 2 dataloaders 
@@ -371,6 +375,7 @@ def main(args):
             'best_prec1': best_prec1,
             'optimizer': optimizer.state_dict() 
         }, is_best)
+    
         
 
 if __name__ == '__main__':
@@ -429,7 +434,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_steps', default=[20, 40], type=float, nargs="+", metavar='LRSteps', help='epochs to decay learning rate by 10')
     parser.add_argument('-i', '--iter-size', default=1, type=int, metavar='N', help='number of iterations before on update')
 
-    parser.add_argument('--clip-gradient', '--gd', default=200, type=float, metavar='W', help='gradient norm clipping (default: disabled)')
+    parser.add_argument('--clip-gradient', '--gd', default=1, type=float, metavar='W', help='gradient norm clipping (default: disabled)')
     args = parser.parse_args()
 
     torch.manual_seed(1234)

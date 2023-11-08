@@ -143,7 +143,7 @@ class RAFT_MultipleFrames(nn.Module):
 
 
     # def forward(self, image1, image2, iters=12, flow_init=None, upsample=True, test_mode=False):
-    def forward(self, input_tensor, iters=12, flow_init=None, upsample=False, test_mode=False):
+    def forward(self, input_tensor, iters=12, flow_init=None, upsample=False, test_mode=True):
         """ Estimate optical flow between multiple(more than 2) frames """
         
         hdim = self.hidden_dim
@@ -196,7 +196,7 @@ class RAFT_MultipleFrames(nn.Module):
         # input tensor shape:  torch.Size([16, 3, 224, 224] 
         # sample_image1 = torch.randn([7, 3, 224, 224])   # sample_image1 shape must be [14, 3, 224, 224] if input tensor's shape is [16, 3, 224, 224]  
                 
-        coords0, coords1 = self.initialize_flow(cnet_input)  # # torch.Size([7, 2, 28, 28])  # # torch.Size([7, 2, 28, 28]): 
+        coords0, coords1 = self.initialize_flow(cnet_input)  # # coords0 : torch.Size([7, 2, 28, 28])  # # coords1: torch.Size([7, 2, 28, 28]): 
 
         
         if flow_init is not None:
@@ -205,12 +205,16 @@ class RAFT_MultipleFrames(nn.Module):
         flow_predictions = []
         
         for itr in range(iters):
+         
             #coords1 = coords1.detach()
         
-            corr = corr_fn(coords1) # index correlation volume :# corr shape: torch.Size([7, 324, 28, 28])  
-    
+            corr = corr_fn(coords1) # index correlation volume :# corr shape: torch.Size([7, 324 (= 9*9*4), 28, 28])  
+
             flow = coords1 - coords0
 
+            corr = corr.view(7, 81,4, 28, 28) 
+            #print(corr[0,:,-1 ])
+            corr =corr.view(7, 324, 28, 28)
             with autocast(enabled=self.args.mixed_precision):
                 net = net.cuda()
                 inp = inp.cuda()
@@ -238,6 +242,7 @@ class RAFT_MultipleFrames(nn.Module):
             
             #flow_predictions.append(flow_up)
             flow_predictions.append(coords1-coords0) 
+            #print((coords1-coords0).shape)
 
         if test_mode:
             return coords1 - coords0, flow_up
@@ -412,6 +417,9 @@ class ResNet(nn.Module):
         if (self.flow_estimation == 1): 
             # run the raft motion estimator 
             flow_predictions, fmap = self.raft_motion_estimator(x)
+            #print('----------')
+            #print(flow_predictions[-1].shape) # [7, 2, 28, 28]
+            #print('------------')
             res = fmap  # res must be [4, 512, 28, 28]) 
             x = self.flow_refinement(flow_predictions, res) 
 
